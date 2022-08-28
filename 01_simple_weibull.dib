@@ -1,0 +1,268 @@
+#!markdown
+
+# Weibull Distribution
+
+[Source: Wikipedia](https://en.wikipedia.org/wiki/Weibull_distribution)
+
+#!fsharp
+
+type Weibull = {
+    Lambda: float
+    K: float
+    }
+    with
+    member this.Density (x: float) =
+        if x <= 0.0
+        then 0.0
+        else
+            (this.K / this.Lambda)
+            *
+            (x / this.Lambda) ** (this.K - 1.0)
+            *
+            exp ( - ((x / this.Lambda) ** this.K))
+    member this.Cumulative (x: float) =
+        if x <= 0.0
+        then 0.0
+        else
+            1.0
+            -
+            exp ( - ((x / this.Lambda) ** this.K))
+    member this.InverseCumulative (p: float) =
+        this.Lambda 
+        *
+        ( - (log (1.0 - p))) ** (1.0 / this.K)
+
+#!fsharp
+
+let weibull = { Lambda = 1.0; K = 1.5 }
+weibull.Density 1.0
+weibull.Cumulative 0.4804530
+weibull.InverseCumulative(0.5)
+
+#!fsharp
+
+#r "nuget: Plotly.NET.Interactive, 3.0.0"
+open Plotly.NET
+
+#!fsharp
+
+[ 0.0 .. 0.1 .. 5.0 ]
+|> List.map (fun t -> t, weibull.Density t)
+|> Chart.Line
+
+#!markdown
+
+## Scale parameter lambda
+
+Lambda is expected to be >=0. It is a scaling factor: by comparison to Lambda = 1.0, 
+- Lambda = 0.5: the distribution has the same overall shape, but compressed,
+- Lambda = 2.0: the distribution has the same overall shape, but stretched.
+
+#!fsharp
+
+[ 0.5; 1.0; 2.0 ]
+|> List.map (fun shape -> 
+    let weibull = { Lambda = shape; K = 1.0 }
+    [ 0.0 .. 0.1 .. 5.0 ]
+    |> List.map (fun t -> t, weibull.Cumulative t)
+    |> fun data -> Chart.Line(data, Name = $"Lambda = {shape}")
+    )
+|> Chart.combine
+|> Chart.withTitle "Weibull: impact of scale parameter Lambda"
+
+#!markdown
+
+## Shape parameter k
+
+The shape parameter k is expected to be >= 0.0, and describes the overall shape of the curve.
+
+- k = 1.0: the failure rate is constant over time (Weibull reduces to an Exponential distribution)
+- k < 1.0: the failure rate decreases over time, or, equivalently, we have a high rate of early failures ("infant mortality"),
+- k > 1.0: the failure rate increases over time, for instance for equipment that degrades with age. 
+
+#!fsharp
+
+[ 0.5; 1.0; 2.0 ]
+|> List.map (fun k -> 
+    let weibull = { Lambda = 1.0; K = k }
+    [ 0.0 .. 0.1 .. 5.0 ]
+    |> List.map (fun t -> t, weibull.Cumulative t)
+    |> fun data -> Chart.Line(data, Name = $"K = {k}")
+    )
+|> Chart.combine
+|> Chart.withTitle "Weibull: impact of shape parameter K"
+
+#!markdown
+
+# Estimating the parameters of a Weibull distribution: Grid Search
+
+Using the Inverse Cumulative Distribution, we can simulate a Weibull distribution.
+What we observe is a "tape", describing failures and the corresponding time to failure. 
+
+#!fsharp
+
+let simulate (rng: System.Random, n: int) (weibull: Weibull) =
+    Array.init n (fun _ ->
+        rng.NextDouble ()
+        |> weibull.InverseCumulative
+        )
+
+#!fsharp
+
+let rng = System.Random(0)
+let sample =
+    { Lambda = 0.8; K = 1.6 }
+    |> simulate (rng, 100)
+sample
+
+#!markdown
+
+We can use grid search to identify the parameters k and lambda that maximize the likelihood of observing such a tape.
+
+#!fsharp
+
+[
+    for lambda in 0.1 .. 0.1 .. 2.0 do
+        for k in 0.1 .. 0.1 .. 2.0 do
+            let w = { Lambda = lambda; K = k }
+            (lambda, k),
+            sample |> Array.sumBy (fun t -> log (w.Density(t)))
+]
+|> List.maxBy snd
+
+#!markdown
+
+# Using Maximum Likelihood Estimation with DiffSharp
+
+#!fsharp
+
+#r "nuget: DiffSharp-cpu, 1.0.7"
+open DiffSharp
+open DiffSharp.Model
+
+#!fsharp
+
+let differentiable 
+    (parameters: seq<Parameter>)
+    (f: 'Input -> 'Output) =
+        Model<'Input, 'Output>.create [] parameters [] f
+
+#!fsharp
+
+let probabilityModel () =
+
+    // We start with an initial guess for our Weibull,
+    // with lambda = 1.0, k = 1.0.
+    let lambda =
+        1.0
+        |> dsharp.scalar
+        |> Parameter
+    let k =
+        1.0
+        |> dsharp.scalar
+        |> Parameter
+
+    let parameters =
+        [| lambda; k |]
+
+    // We create the Probability Density function,
+    // specifying that we want to differentiate it
+    // with respect to the Lambda and K parameters.
+    differentiable
+        parameters
+        (fun (time: float) ->
+            if time <= 0.0
+            then dsharp.scalar 0.0
+            else
+                (k.value / lambda.value)
+                *
+                ((time / lambda.value) ** (k.value - 1.0))
+                *
+                (exp ( - ((time / lambda.value) ** k.value)))
+            )
+
+#!fsharp
+
+type Config = {
+    LearningRate: float
+    MaximumIterations: int
+    Tolerance: float
+    }
+
+let maximizeLikelihood (config: Config) sample (density: Model<_,_>) =
+
+    let logLikelihood (density: Model<_,_>) =
+        sample
+        |> Array.sumBy (fun outcome ->
+            density.forward outcome
+            |> dsharp.log
+            )
+
+    let tolerance =
+        config.Tolerance
+        |> dsharp.scalar
+
+    let rec learn iteration =
+        // evaluate the log likelihood and propagate back to density
+        density.reverseDiff()
+        let evaluation: Tensor = logLikelihood density
+        evaluation.reverse()
+        // update the parameters of density
+        let p = density.parametersVector
+        density.parametersVector 
+            <- p.primal + config.LearningRate * p.derivative
+        // stop iterating, or keep going
+        if
+            dsharp.norm p.derivative < tolerance 
+            ||
+            iteration >= config.MaximumIterations
+        then
+            let learnt = density.parametersVector
+            {
+                Lambda = learnt.[0] |> float
+                K = learnt.[1] |> float
+            }
+        else learn (iteration + 1)
+    learn 1
+
+#!fsharp
+
+let config = {
+    LearningRate = 0.001
+    MaximumIterations = 100
+    Tolerance = 0.001
+    }
+
+let rng = Random 0
+
+let sample =
+    { Lambda = 1.5; K = 0.8 }
+    |> simulate (rng, 100)
+
+probabilityModel ()
+|> maximizeLikelihood config sample
+
+#!markdown
+
+# Evaluation
+
+Generate a random sample of Weibull distributions,
+and compare the estimation result with the true underlying distribution.
+
+#!fsharp
+
+let evaluation (rng: Random) (weibull: Weibull) =
+    let sample =
+       weibull
+        |> simulate (rng, 100)
+    let estimate =
+        probabilityModel ()
+        |> maximizeLikelihood config sample
+    estimate
+
+Array.init 10 (fun _ ->
+    let lambda = 0.5 + 2.0 * rng.NextDouble()
+    let k = 0.5 + rng.NextDouble()
+    let weibull = { Lambda = lambda; K = k }
+    weibull, evaluation rng weibull
+    )
