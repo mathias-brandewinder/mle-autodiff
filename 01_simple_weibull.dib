@@ -68,6 +68,8 @@ Lambda is expected to be >=0. It is a scaling factor: by comparison to Lambda = 
     |> fun data -> Chart.Line(data, Name = $"Lambda = {shape}")
     )
 |> Chart.combine
+|> Chart.withXAxisStyle "Time to failure"
+|> Chart.withYAxisStyle "Cumulative probability"
 |> Chart.withTitle "Weibull: impact of scale parameter Lambda"
 
 #!markdown
@@ -90,6 +92,8 @@ The shape parameter k is expected to be >= 0.0, and describes the overall shape 
     |> fun data -> Chart.Line(data, Name = $"K = {k}")
     )
 |> Chart.combine
+|> Chart.withXAxisStyle "Time to failure"
+|> Chart.withYAxisStyle "Cumulative probability"
 |> Chart.withTitle "Weibull: impact of shape parameter K"
 
 #!markdown
@@ -126,7 +130,10 @@ We can use grid search to identify the parameters k and lambda that maximize the
         for k in 0.1 .. 0.1 .. 2.0 do
             let w = { Lambda = lambda; K = k }
             (lambda, k),
-            sample |> Array.sumBy (fun t -> log (w.Density(t)))
+            sample 
+            |> Array.sumBy (fun t -> 
+                log (w.Density(t))
+                )
 ]
 |> List.maxBy snd
 
