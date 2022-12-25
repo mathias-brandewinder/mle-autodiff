@@ -1,0 +1,306 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":null,"items":[{"name":"csharp","languageName":"C#","aliases":["c#","cs"]},{"name":"fsharp","languageName":"F#","aliases":["f#","fs"]},{"name":"pwsh","languageName":"PowerShell","aliases":["powershell"]},{"name":"javascript","languageName":"JavaScript","aliases":["js"]},{"name":"html","languageName":"HTML"},{"name":"sql","languageName":"SQL"},{"name":"kql","languageName":"KQL"},{"name":"mermaid","languageName":"Mermaid"},{"name":"httpRequest","languageName":"http"},{"name":"value"}]}}
+
+#!markdown
+
+# Exploration: built-in optimizers
+
+#!markdown
+
+## Dependencies
+
+Charting: [Plotly.NET](https://plotly.net/)
+Automatic differentiation: [DiffSharp](https://diffsharp.github.io/)
+
+#!fsharp
+
+#r "nuget: Plotly.NET.Interactive, 3.0.0"
+open Plotly.NET
+open Plotly.NET.TraceObjects
+
+#r "nuget: DiffSharp-cpu, 1.0.7"
+open DiffSharp
+open DiffSharp.Model
+open DiffSharp.Optim
+
+#!fsharp
+
+dsharp.config (backend=Backend.Torch, device=Device.CPU)
+dsharp.seed(1)
+
+#!markdown
+
+## 2D surface
+
+#!fsharp
+
+let f (x: float, y: float) =
+    0.26 * (pown x 2 + pown y 2) - 0.48 * x * y
+
+#!fsharp
+
+let surface ((xMin, xMax), (yMin, yMax)) f =
+    let xStep = (xMax - xMin) / 100.0
+    let yStep = (yMax - yMin) / 100.0
+    let xs = [| xMin .. xStep .. xMax |]
+    let ys = [| yMin .. yStep .. yMax |]
+    let z =
+        Array.init ys.Length (fun yi ->
+            Array.init xs.Length (fun xi -> f (xs.[xi], ys.[yi]))
+            )
+    Chart.Surface (
+        z,
+        X = xs,
+        Y = ys,
+        Opacity = 0.5,
+        Contours = Contours.initXyz (Show=true),
+        ShowScale = false
+        )
+
+#!fsharp
+
+f |> surface ((-10.0, 10.0), (-10.0, 10.0))
+
+#!fsharp
+
+let trajectory positions f =
+    let coordinates =
+        positions
+        |> Seq.map (fun (x, y) -> x, y, f (x, y)
+        )
+    Chart.Scatter3D (
+        coordinates,
+        mode = StyleParam.Mode.Lines_Markers,
+        Marker = Marker.init(Size = 3)
+        )
+
+let named name = Chart.withTraceInfo(Name = name)
+
+#!fsharp
+
+f |> trajectory [ (1.0, 2.0); (1.0, 3.0); (2.0, 3.0); (2.0, 4.0) ]
+
+#!fsharp
+
+[
+    f |> surface ((-10.0, 10.0), (-10.0, 10.0))
+    f |> trajectory [ (10.0, 2.0); (9.0, 3.0); (8.0, 3.0); (7.0, 4.0) ] |> named "X"
+    f |> trajectory [ (1.0, 2.0); (1.0, 3.0); (2.0, 3.0); (2.0, 4.0) ] |> named "Y"
+]
+|> Chart.combine
+|> Chart.withSize (1000, 1000)
+
+#!markdown
+
+## Hand rolled gradient descent
+
+#!fsharp
+
+let gradientStep (lr: float) x f =
+    let g = dsharp.grad f x
+    x - lr * g
+
+#!fsharp
+
+let objective (input: Tensor) =
+    let x = input.[0]
+    let y = input.[1]
+    0.26 * (pown x 2 + pown y 2) - 0.48 * x * y
+
+#!fsharp
+
+objective (dsharp.tensor [ 5.0; 5.0 ]) |> float
+
+#!fsharp
+
+let updated =
+    objective
+    |> gradientStep 0.25 (dsharp.tensor [ 5.0; 5.0 ])
+updated
+|> objective
+|> float
+
+#!fsharp
+
+let gradientDescent lr init f =
+    init
+    |> Seq.unfold (fun x ->
+        let updated = gradientStep lr x f
+        let objectiveValue = f updated
+        Some ((updated, objectiveValue), updated)
+        )
+
+#!fsharp
+
+objective
+|> gradientDescent 0.25 (dsharp.tensor [ 5.0; 5.0 ])
+|> Seq.take 100
+|> Seq.mapi (fun i (coeffs, value) -> i, float value)
+|> Chart.Line
+
+#!fsharp
+
+let traj1 =
+    objective
+    |> gradientDescent 0.25 (dsharp.tensor [ -5.0; 10.0 ])
+    |> Seq.take 100
+    |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
+    |> Seq.map snd
+
+let traj2 =
+    objective
+    |> gradientDescent 0.10 (dsharp.tensor [ -5.0; 10.0 ])
+    |> Seq.take 100
+    |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
+    |> Seq.map snd
+
+let traj3 =
+    objective
+    |> gradientDescent 1.8 (dsharp.tensor [ -5.0; 10.0 ])
+    |> Seq.take 100
+    |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
+    |> Seq.map snd    
+
+[
+    f |> surface ((-10.0, 10.0), (-10.0, 10.0))
+    f |> trajectory traj1 |> named "lr = 0.25"
+    f |> trajectory traj2 |> named "lr = 0.10"
+    f |> trajectory traj3 |> named "lr = 1.80"
+]
+|> Chart.combine
+|> Chart.withXAxisStyle("X", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
+|> Chart.withYAxisStyle("Y", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
+|> Chart.withZAxisStyle("Z", MinMax = (0.0, 150.0))
+|> Chart.withSize (1000, 1000)
+
+#!markdown
+
+## Built in optimizers
+
+#!fsharp
+
+let adamStep (lr: float) (init: float []) (target: Tensor -> Tensor) =
+
+    let model =
+        let w = Parameter (dsharp.tensor init)
+        Model.create
+            [] [ w ] []
+            (fun _ -> w.value)
+
+    let opt = Adam(model, lr = dsharp.scalar lr)
+
+    let eval (model: Model) =
+        target (model.forward Tensor.Zero)
+
+    fun () ->
+        model.reverseDiff()
+        let loss = eval model
+        loss.reverse()
+        opt.step()
+        model
+
+#!fsharp
+
+let adamDescent lr init f =
+    let gradientStep = adamStep lr init f
+    init
+    |> Seq.unfold (fun x ->
+        let updatedModel = gradientStep ()
+        let position = updatedModel.parametersVector.toArray1D<float>()
+        Some (position, position)
+        )
+
+#!fsharp
+
+let traj1 =
+    objective
+    |> gradientDescent 0.10 (dsharp.tensor [ -5.0; 10.0 ])
+    |> Seq.take 1000
+    |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
+    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.map snd
+
+let traj2 =
+    objective
+    |> adamDescent 5.00 [| -5.0; 10.0 |]
+    |> Seq.take 1000
+    |> Seq.mapi (fun i pos -> i, (pos.[0] |> float, pos.[1] |> float))
+    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.map snd
+
+[
+    f |> surface ((-10.0, 10.0), (-10.0, 10.0))
+    f |> trajectory traj1 |> named "grad, lr = 0.25"
+    f |> trajectory traj2 |> named "adam, lr = 0.25"
+]
+|> Chart.combine
+|> Chart.withXAxisStyle("X", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
+|> Chart.withYAxisStyle("Y", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
+|> Chart.withZAxisStyle("Z", MinMax = (0.0, 150.0))
+|> Chart.withSize (1000, 1000)
+
+#!fsharp
+
+let sgdStep (lr: float) (init: float []) (target: Tensor -> Tensor) =
+
+    let model =
+        let w = Parameter (dsharp.tensor init)
+        Model.create
+            [] [ w ] []
+            (fun _ -> w.value)
+
+    let opt = SGD(model, lr = dsharp.scalar lr)
+
+    let eval (model: Model) =
+        target (model.forward Tensor.Zero)
+
+    fun () ->
+        model.reverseDiff()
+        let loss = eval model
+        loss.reverse()
+        opt.step()
+        model
+
+#!fsharp
+
+let sgdDescent lr init f =
+    let gradientStep = sgdStep lr init f
+    init
+    |> Seq.unfold (fun x ->
+        let updatedModel = gradientStep ()
+        let position = updatedModel.parametersVector.toArray1D<float>()
+        Some (position, position)
+        )
+
+#!fsharp
+
+let traj1 =
+    objective
+    |> gradientDescent 0.25 (dsharp.tensor [ -5.0; 10.0 ])
+    |> Seq.take 1000
+    |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
+    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.map snd
+
+let traj2 =
+    objective
+    |> sgdDescent 0.25 [| -5.0; 10.0 |]
+    |> Seq.take 1000
+    |> Seq.mapi (fun i pos -> i, (pos.[0] |> float, pos.[1] |> float))
+    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.map snd
+
+[
+    f |> surface ((-10.0, 10.0), (-10.0, 10.0))
+    f |> trajectory traj1 |> named "grad, lr = 0.25"
+    f |> trajectory traj2 |> named "sgd,  lr = 0.25"
+]
+|> Chart.combine
+|> Chart.withXAxisStyle("X", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
+|> Chart.withYAxisStyle("Y", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
+|> Chart.withZAxisStyle("Z", MinMax = (0.0, 150.0))
+|> Chart.withSize (800, 800)
