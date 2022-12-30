@@ -26,12 +26,15 @@ open DiffSharp.Optim
 
 #!fsharp
 
-dsharp.config (backend=Backend.Torch, device=Device.CPU)
-dsharp.seed(1)
+dsharp.config (backend = Backend.Torch, device = Device.CPU)
+dsharp.seed 1
 
 #!markdown
 
 ## 2D surface
+
+Source: [Unimodal function 2](https://machinelearningmastery.com/2d-test-functions-for-function-optimization/)
+This function has a minimum at (0.0, 0.0)
 
 #!fsharp
 
@@ -89,7 +92,7 @@ f |> trajectory [ (1.0, 2.0); (1.0, 3.0); (2.0, 3.0); (2.0, 4.0) ]
     f |> trajectory [ (1.0, 2.0); (1.0, 3.0); (2.0, 3.0); (2.0, 4.0) ] |> named "Y"
 ]
 |> Chart.combine
-|> Chart.withSize (1000, 1000)
+|> Chart.withSize (800, 800)
 
 #!markdown
 
@@ -138,29 +141,31 @@ objective
 |> Seq.take 100
 |> Seq.mapi (fun i (coeffs, value) -> i, float value)
 |> Chart.Line
+|> Chart.withXAxisStyle "Iteration"
+|> Chart.withYAxisStyle "Objective"
 
 #!fsharp
 
 let traj1 =
     objective
     |> gradientDescent 0.25 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 100
+    |> Seq.take 1000
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
     |> Seq.map snd
 
 let traj2 =
     objective
     |> gradientDescent 0.10 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 100
+    |> Seq.take 1000
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
     |> Seq.map snd
 
 let traj3 =
     objective
-    |> gradientDescent 1.8 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 100
+    |> gradientDescent 2.0 (dsharp.tensor [ -5.0; 10.0 ])
+    |> Seq.take 1000
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
     |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd    
@@ -169,13 +174,13 @@ let traj3 =
     f |> surface ((-10.0, 10.0), (-10.0, 10.0))
     f |> trajectory traj1 |> named "lr = 0.25"
     f |> trajectory traj2 |> named "lr = 0.10"
-    f |> trajectory traj3 |> named "lr = 1.80"
+    f |> trajectory traj3 |> named "lr = 2.00"
 ]
 |> Chart.combine
 |> Chart.withXAxisStyle("X", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
 |> Chart.withYAxisStyle("Y", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
-|> Chart.withZAxisStyle("Z", MinMax = (0.0, 150.0))
-|> Chart.withSize (1000, 1000)
+|> Chart.withZAxisStyle("Z", MinMax = (0.0, 120.0))
+|> Chart.withSize (800, 800)
 
 #!markdown
 
@@ -218,18 +223,18 @@ let adamDescent lr init f =
 
 let traj1 =
     objective
-    |> gradientDescent 0.10 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 1000
+    |> gradientDescent 0.25 (dsharp.tensor [ -5.0; 10.0 ])
+    |> Seq.take 100
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd
 
 let traj2 =
     objective
-    |> adamDescent 5.00 [| -5.0; 10.0 |]
-    |> Seq.take 1000
+    |> adamDescent 0.25 [| -5.0; 10.0 |]
+    |> Seq.take 100
     |> Seq.mapi (fun i pos -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd
 
 [
@@ -240,8 +245,8 @@ let traj2 =
 |> Chart.combine
 |> Chart.withXAxisStyle("X", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
 |> Chart.withYAxisStyle("Y", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
-|> Chart.withZAxisStyle("Z", MinMax = (0.0, 150.0))
-|> Chart.withSize (1000, 1000)
+|> Chart.withZAxisStyle("Z", MinMax = (0.0, 120.0))
+|> Chart.withSize (800, 800)
 
 #!fsharp
 
@@ -253,7 +258,7 @@ let sgdStep (lr: float) (init: float []) (target: Tensor -> Tensor) =
             [] [ w ] []
             (fun _ -> w.value)
 
-    let opt = SGD(model, lr = dsharp.scalar lr)
+    let opt = SGD(model, lr = dsharp.scalar lr, momentum = dsharp.scalar 0.0)
 
     let eval (model: Model) =
         target (model.forward Tensor.Zero)
@@ -281,17 +286,17 @@ let sgdDescent lr init f =
 let traj1 =
     objective
     |> gradientDescent 0.25 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 1000
+    |> Seq.take 100
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd
 
 let traj2 =
     objective
     |> sgdDescent 0.25 [| -5.0; 10.0 |]
-    |> Seq.take 1000
+    |> Seq.take 100
     |> Seq.mapi (fun i pos -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd
 
 [
@@ -302,5 +307,5 @@ let traj2 =
 |> Chart.combine
 |> Chart.withXAxisStyle("X", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
 |> Chart.withYAxisStyle("Y", Id = StyleParam.SubPlotId.Scene 1, MinMax = (-10.0, 10.0))
-|> Chart.withZAxisStyle("Z", MinMax = (0.0, 150.0))
+|> Chart.withZAxisStyle("Z", MinMax = (0.0, 120.0))
 |> Chart.withSize (800, 800)
