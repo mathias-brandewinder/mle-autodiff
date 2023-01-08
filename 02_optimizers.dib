@@ -138,6 +138,16 @@ let gradientDescent lr init f =
 
 objective
 |> gradientDescent 0.25 (dsharp.tensor [ 5.0; 5.0 ])
+|> Seq.take 10
+|> Seq.map (fun (coeffs, value) ->
+    (coeffs.[0] |> float, coeffs.[1] |> float),
+    value |> float
+    )
+
+#!fsharp
+
+objective
+|> gradientDescent 0.25 (dsharp.tensor [ 5.0; 5.0 ])
 |> Seq.take 100
 |> Seq.mapi (fun i (coeffs, value) -> i, float value)
 |> Chart.Line
@@ -149,23 +159,23 @@ objective
 let traj1 =
     objective
     |> gradientDescent 0.25 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 1000
+    |> Seq.take 100
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd
 
 let traj2 =
     objective
     |> gradientDescent 0.10 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 1000
+    |> Seq.take 100
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
-    |> Seq.filter (fun (i, pos) -> i % 10 = 0)
+    |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd
 
 let traj3 =
     objective
     |> gradientDescent 2.0 (dsharp.tensor [ -5.0; 10.0 ])
-    |> Seq.take 1000
+    |> Seq.take 100
     |> Seq.mapi (fun i (pos, _) -> i, (pos.[0] |> float, pos.[1] |> float))
     |> Seq.filter (fun (i, pos) -> i % 1 = 0)
     |> Seq.map snd    
